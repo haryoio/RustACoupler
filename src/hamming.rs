@@ -2,7 +2,6 @@ pub(crate) mod Hamming {
     use std::ops::Div;
 
     use nalgebra::{DMatrix, Dynamic};
-    use ndarray::{arr2, array, Array2};
 
     /// 8x4
     static GENERATE_MATRIX: [u8; 32] = [
@@ -29,7 +28,6 @@ pub(crate) mod Hamming {
         if len % 4 != 0 {
             panic!()
         }
-        println!("{}", len);
 
         let gen_mat = DMatrix::from_row_slice(8, 4, &GENERATE_MATRIX);
         let data_mat = DMatrix::from_vec(1, len, data);

@@ -1,19 +1,17 @@
 pub mod binary;
-pub mod config;
 pub mod hamming;
 pub mod utils;
 
 use binary::encode_u8;
-use config::{AMP, ONE_FREQ, ZERO_FREQ};
+use hamming::Hamming::calc_parity;
 use hound::{self, WavWriter};
-use iter_num_tools::arange;
 use itertools::Itertools;
 use itertools_num::ItertoolsNum;
-use secded::{SecDed64, SecDedCodec, SecDedDynamic};
-use std::{f32::consts::PI, fs::File};
-use std::{i16, io::BufWriter};
+use std::f32::consts::PI;
+use std::i16;
 use utils::repeat;
 
+#[derive(Clone)]
 struct AcousticCouplerConfig {
     sample_rate: f32,
     baud_rate: u16,
@@ -79,6 +77,7 @@ impl ACCBuilder {
     }
 }
 
+#[derive(Clone)]
 struct AcousticCoupler {
     config: AcousticCouplerConfig,
 }
@@ -90,6 +89,8 @@ impl AcousticCoupler {
 
     pub fn send(&mut self, data: &str) {
         let bin = encode_u8(data);
+        let bin = self.clone().add_syn(bin.clone());
+        let bin = self.clone().get_hamming_code(bin);
 
         let mut buf = vec![];
         for b in bin {
@@ -117,7 +118,33 @@ impl AcousticCoupler {
         }
     }
 
-    fn add_syn(bin: &[u8]) {}
+    fn add_syn(self, bin: Vec<u8>) -> Vec<u8> {
+        let mut buf = vec![];
+        let syn: Vec<u8> = [0, 0, 0, 1, 0, 1, 1, 0].to_vec();
+        buf.extend(syn.clone());
+        buf.extend(syn.clone());
+        buf.extend(bin.clone());
+        buf.extend(syn.clone());
+        buf
+    }
+    fn get_hamming_code(self, bin: Vec<u8>) -> Vec<u8> {
+        let origin = bin.clone();
+
+        if bin.len() % 4 != 0 {
+            panic!("4の倍数値の必要があります。");
+        }
+        if bin.len() > 4 {
+            let mut buf = vec![];
+            let target = &origin[..4];
+            let res = calc_parity(target.to_vec());
+            let res1 = self.get_hamming_code(origin[4..].to_vec());
+            buf.extend(res);
+            buf.extend(res1);
+            return buf;
+        } else {
+            return calc_parity(origin);
+        }
+    }
 
     fn one_or_zero(&mut self, data: &u8) -> f32 {
         if data == &0 {
@@ -137,5 +164,8 @@ fn main() {
         .filename("sin".to_string())
         .build();
 
-    // ac.send("connitiha-asdfasdfaasdfasdfasdfadfadfadfadfadfadf");
+    ac.send("casc");
 }
+
+// b[1, 1, 0, 0, 1, 1, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0]
+// c[1, 1, 0, 0, 1, 1, 0, 0, 0, 1, 0, 0, 0, 0, 1, 1, 1, 0]
