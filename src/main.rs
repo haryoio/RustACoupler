@@ -20,13 +20,14 @@ enum Status {
 }
 
 fn main() -> Result<(), pa::Error> {
-    let config = ModemConfig::default();
-    let mut ac = Transmitter::new(config);
+    // let config = ModemConfig::default();
+    // let mut ac = Transmitter::new(config);
 
-    let config = ModemConfig::default();
-    let mut ac = Receiver::new(config);
+    // let config = ModemConfig::default();
+    // let mut ac = Receiver::new(config);
 
-    return ac.run();
+    // return ac.run();
     // let data = ac.modulation("konnichiwa---asfdadf");
     // ac.play(&data);
+    Ok(())
 }

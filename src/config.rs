@@ -19,14 +19,30 @@ pub struct ModemConfig {
     pub role: Role,
 }
 
+impl ModemConfig {
+    pub fn get_input_rate(&self) -> ModemConfig {
+        ModemConfig {
+            samplerate: self.samplerate * 2f32,
+            baudrate: self.baudrate,
+            latency: (1.0 / self.baudrate as f64 * self.samplerate as f64 * 2f64),
+            low_freq: self.low_freq,
+            high_freq: self.high_freq,
+            threshold: self.threshold,
+            amplitude: self.amplitude,
+            channels: self.channels,
+            role: Role::Transmitter,
+        }
+    }
+}
+
 impl Default for ModemConfig {
     fn default() -> Self {
         let mut conf = Self {
             samplerate: 44100f32,
-            baudrate: 100,
+            baudrate: 300,
             latency: Default::default(),
-            low_freq: 220f32,
-            high_freq: 440f32,
+            low_freq: 1200f32,
+            high_freq: 2400f32,
             threshold: 300f32,
             amplitude: i16::MAX as f32,
             channels: 1,

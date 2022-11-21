@@ -4,13 +4,21 @@ use config::ModemConfig;
 use itertools::Itertools;
 use itertools_num::ItertoolsNum;
 use portaudio as pa;
-use std::f32::consts::PI;
+use std::{
+    f32::consts::PI,
+    sync::{mpsc, Arc, Mutex},
+};
 use utils::repeat;
+
+use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use cpal::StreamConfig;
+use cpal::{Data, Sample, SampleFormat};
+use ringbuf::HeapRb;
 
 use crate::{
     binary, config,
     hamming::{self, Hamming::get_hamming_code},
-    utils,
+    utils, PREAMBLE, SFD,
 };
 
 #[derive(Clone)]
@@ -23,11 +31,32 @@ impl Transmitter {
         return Transmitter { config };
     }
 
-    pub fn modulation(&mut self, data: &str) -> Vec<f32> {
+    pub fn encode(&mut self, data: &str) -> Vec<u8> {
         let bin = encode_u8(data);
         let bin = self.clone().add_syn(bin.clone());
         let bin = get_hamming_code(bin);
+        bin
+    }
 
+    fn add_syn(self, bin: Vec<u8>) -> Vec<u8> {
+        let mut buf = vec![];
+        buf.extend(PREAMBLE);
+        buf.extend(SFD);
+        buf.extend(bin.clone());
+        buf.extend(PREAMBLE);
+        buf
+    }
+
+    fn one_or_zero(&mut self, data: &u8) -> f32 {
+        if data == &0 {
+            self.config.low_freq
+        } else {
+            self.config.high_freq
+        }
+    }
+
+    // バイナリデータを変調する
+    pub fn modulation(&mut self, bin: Vec<u8>) -> Vec<f32> {
         let mut buf = vec![];
         for b in bin {
             buf.push(self.one_or_zero(&b));
@@ -45,64 +74,49 @@ impl Transmitter {
             .collect::<Vec<_>>()
     }
 
-    fn add_syn(self, bin: Vec<u8>) -> Vec<u8> {
-        let mut buf = vec![];
-        let syn: Vec<u8> = [0, 0, 0, 1, 0, 1, 1, 0].to_vec();
-        buf.extend(syn.clone());
-        buf.extend(syn.clone());
-        buf.extend(bin.clone());
-        buf.extend(syn.clone());
-        buf
-    }
+    pub fn send(&mut self, in_data: &str) {
+        let in_data = self.encode(in_data);
+        let in_data = self.modulation(in_data);
+        let err_fn = |err| eprintln!("an error occurred on stream: {}", err);
 
-    fn one_or_zero(&mut self, data: &u8) -> f32 {
-        if data == &0 {
-            self.config.low_freq
-        } else {
-            self.config.high_freq
+        let host = cpal::default_host();
+        let device = host.default_output_device().unwrap();
+        let config = StreamConfig {
+            channels: self.config.channels as u16,
+            sample_rate: cpal::SampleRate((self.config.samplerate as usize) as u32),
+            buffer_size: cpal::BufferSize::Default,
+        };
+        let ring = HeapRb::<f32>::new(in_data.len());
+        let (mut producer, mut consumer) = ring.split();
+        let (tx, rx) = mpsc::channel::<bool>();
+
+        for sample in in_data {
+            producer.push(sample).unwrap();
         }
-    }
 
-    pub fn play(&self, data: &[f32]) {
-        let pa = pa::PortAudio::new().unwrap();
-        let device = pa.default_output_device().unwrap();
-        let output_info = pa.device_info(device).unwrap();
-        let latency = output_info.default_low_output_latency;
-
-        let output_params =
-            pa::StreamParameters::<f32>::new(device, self.config.channels, true, latency);
-
-        pa.is_output_format_supported(output_params, self.config.samplerate.into())
-            .unwrap();
-        let settings =
-            pa::OutputStreamSettings::new(output_params, self.config.samplerate.into(), 1024);
-
-        let mut stream = pa.open_blocking_stream(settings).unwrap();
-
-        let mut wav_buffer_iter = data.iter();
-        let mut len = data.len();
-        stream.start().unwrap();
-        loop {
-            let n_write_samples = 1024 as usize * self.config.channels as usize;
-
-            let res = stream.write(1024 as u32, |output| {
-                for i in 0..n_write_samples {
-                    match wav_buffer_iter.next() {
-                        Some(t) => {
-                            len -= 1;
-                            output[i] = 0.1 * (*t as f32 / 32767.0);
+        let stream = device
+            .build_output_stream(
+                &config,
+                move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                    for sample in data {
+                        *sample = match consumer.pop() {
+                            Some(t) => 0.1 * (t as f32 / 32767.0),
+                            None => {
+                                tx.send(false).unwrap();
+                                0.0
+                            }
                         }
-                        None => len = 0,
-                    };
-                }
-            });
-            match res {
-                Ok(_) => {
-                    if len == 0 {
-                        break;
                     }
-                }
-                Err(e) => break,
+                },
+                err_fn,
+            )
+            .unwrap();
+        stream.play().unwrap();
+
+        while let Ok(msg) = rx.recv() {
+            if !msg {
+                stream.pause().unwrap();
+                break;
             }
         }
     }

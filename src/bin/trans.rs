@@ -10,8 +10,8 @@ use rust_a_coupler::hamming::Hamming::calc_parity;
 use rust_a_coupler::receiver::Receiver;
 use rust_a_coupler::transmitter::Transmitter;
 use rust_a_coupler::utils::repeat;
-use std::i16;
 use std::{f32::consts::PI, sync::mpsc};
+use std::{i16, thread};
 
 enum Status {
     WAIT,
@@ -19,9 +19,25 @@ enum Status {
 }
 
 fn main() -> Result<(), pa::Error> {
-    let config = ModemConfig::default();
-    let mut trans = Transmitter::new(config);
-    let data = trans.modulation("hello");
-    trans.play(&data);
+    let mut handles = vec![];
+
+    handles.push(thread::spawn(|| {
+        let config = ModemConfig::default().get_input_rate();
+        let mut recv = Receiver::new(config);
+        if let Err(e) = recv.run() {
+            println!("{}", e);
+        }
+    }));
+    // handles.push(thread::spawn(|| {
+    //     let config = ModemConfig::default();
+    //     let mut trans = Transmitter::new(config);
+    //     trans.send("hello");
+    //     println!("send");
+    // }));
+
+    for handle in handles {
+        handle.join().unwrap();
+    }
+
     return Ok(());
 }
