@@ -1,17 +1,13 @@
-use binary::encode_u8;
+use std::f32::consts::PI;
 
+use ascii::encode_u8;
 use config::ModemConfig;
 use itertools::Itertools;
 use itertools_num::ItertoolsNum;
 use portaudio as pa;
-use std::f32::consts::PI;
 use utils::repeat;
 
-use crate::{
-    binary, config,
-    hamming::{self, Hamming::get_hamming_code},
-    utils,
-};
+use crate::{ascii, config, hamming::Hamming::get_hamming_code, utils, USFD};
 
 #[derive(Clone)]
 pub struct Transmitter {
@@ -20,62 +16,104 @@ pub struct Transmitter {
 
 impl Transmitter {
     pub fn new(config: ModemConfig) -> Transmitter {
+        let mut config = config;
+        // config.samplerate = config.samplerate / 2f32;
         return Transmitter { config };
     }
 
-    pub fn modulation(&mut self, data: &str) -> Vec<f32> {
+    fn encode(&self, data: &str) -> Vec<u8> {
         let bin = encode_u8(data);
-        let bin = self.clone().add_syn(bin.clone());
         let bin = get_hamming_code(bin);
+        let bin = self.add_syn(bin.clone());
+        bin
+    }
 
-        let mut buf = vec![];
-        for b in bin {
-            buf.push(self.one_or_zero(&b));
-        }
-        let symbol_freqs = repeat(buf, self.config.latency as usize);
-        let delta_phi: Vec<f32> = symbol_freqs
+    pub fn qfsk(&mut self, data: &str) -> Vec<f32> {
+        let bin = self.encode(data);
+        let buf = self.set_tone_qfsk(&bin);
+        let symbol_freqs = repeat(buf, self.config.latency() as usize);
+        symbol_freqs
             .iter()
             .map(|d| (d * PI / (self.config.samplerate / 2.0)))
             .cumsum()
-            .collect_vec();
-
-        delta_phi
+            .collect::<Vec<f32>>()
             .iter()
             .map(|d| d.sin() * self.config.amplitude)
-            .collect::<Vec<_>>()
+            .collect::<Vec<f32>>()
     }
 
-    fn add_syn(self, bin: Vec<u8>) -> Vec<u8> {
+    pub fn bfsk(&mut self, data: &str) -> Vec<f32> {
+        let bin = self.encode(data);
+        let buf = self.set_tone_bfsk(&bin);
+
+        let symbol_freqs = repeat(buf, self.config.latency() as usize);
+        symbol_freqs
+            .iter()
+            .map(|d| (d * PI / (self.config.samplerate / 2.0)))
+            .cumsum()
+            .collect::<Vec<f32>>()
+            .iter()
+            .map(|d| d.sin() * self.config.amplitude)
+            .collect::<Vec<f32>>()
+    }
+
+    fn add_syn(&self, bin: Vec<u8>) -> Vec<u8> {
         let mut buf = vec![];
-        let syn: Vec<u8> = [0, 0, 0, 1, 0, 1, 1, 0].to_vec();
-        buf.extend(syn.clone());
-        buf.extend(syn.clone());
+
+        buf.extend(USFD);
+
         buf.extend(bin.clone());
-        buf.extend(syn.clone());
+
+        buf.extend(USFD);
         buf
     }
 
-    fn one_or_zero(&mut self, data: &u8) -> f32 {
-        if data == &0 {
-            self.config.low_freq
-        } else {
-            self.config.high_freq
+    fn set_tone_bfsk(&mut self, data: &Vec<u8>) -> Vec<f32> {
+        let d = data.clone();
+        let mut res = vec![];
+        for b in d {
+            match b {
+                0 => res.push(self.config.low_freq),
+                1 => res.push(self.config.high_freq),
+                _ => res.push(0.0),
+            }
         }
+        res
+    }
+
+    fn set_tone_qfsk(&mut self, data: &Vec<u8>) -> Vec<f32> {
+        let mut d = data.clone();
+        let mut res = vec![];
+        while !d.is_empty() {
+            let mut two_bit = vec![];
+            two_bit.push(d.pop().unwrap());
+            two_bit.push(d.pop().unwrap());
+            match *two_bit {
+                [0, 0] => res.push(self.config.low_freq),
+                [0, 1] => res.push(self.config.low_freq * 1.5),
+                [1, 0] => res.push(self.config.low_freq * 2.0),
+                [1, 1] => res.push(self.config.low_freq * 2.5),
+                _ => res.push(0.0),
+            }
+        }
+        res
     }
 
     pub fn play(&self, data: &[f32]) {
         let pa = pa::PortAudio::new().unwrap();
         let device = pa.default_output_device().unwrap();
-        let output_info = pa.device_info(device).unwrap();
-        let latency = output_info.default_low_output_latency;
+        let latency: f64 = 1.0 / self.config.samplerate as f64;
 
         let output_params =
             pa::StreamParameters::<f32>::new(device, self.config.channels, true, latency);
 
         pa.is_output_format_supported(output_params, self.config.samplerate.into())
             .unwrap();
-        let settings =
-            pa::OutputStreamSettings::new(output_params, self.config.samplerate.into(), 1024);
+        let settings = pa::OutputStreamSettings::new(
+            output_params,
+            self.config.samplerate.into(),
+            self.config.latency().ceil() as u32,
+        );
 
         let mut stream = pa.open_blocking_stream(settings).unwrap();
 
@@ -83,14 +121,14 @@ impl Transmitter {
         let mut len = data.len();
         stream.start().unwrap();
         loop {
-            let n_write_samples = 1024 as usize * self.config.channels as usize;
+            let n_write_samples = self.config.latency() as usize;
 
-            let res = stream.write(1024 as u32, |output| {
+            let res = stream.write(self.config.latency() as u32, |output| {
                 for i in 0..n_write_samples {
                     match wav_buffer_iter.next() {
                         Some(t) => {
                             len -= 1;
-                            output[i] = 0.1 * (*t as f32 / 32767.0);
+                            output[i] = 0.5 * (*t as f32 / i16::MAX as f32);
                         }
                         None => len = 0,
                     };

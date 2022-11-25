@@ -1,4 +1,13 @@
-use crate::{binary, hamming, receiver::Receiver, transmitter::Transmitter, utils};
+use portaudio::stream::Mode;
+
+use crate::{
+    ascii,
+    hamming,
+    receiver::Receiver,
+    transmitter::Transmitter,
+    utils,
+    ModulationMethod,
+};
 
 #[derive(Clone, Debug)]
 pub enum Role {
@@ -8,31 +17,35 @@ pub enum Role {
 
 #[derive(Clone, Debug)]
 pub struct ModemConfig {
-    pub samplerate: f32,
-    pub baudrate: u16,
-    pub latency: f64,
-    pub low_freq: f32,
-    pub high_freq: f32,
-    pub threshold: f32,
-    pub amplitude: f32,
-    pub channels: i32,
-    pub role: Role,
+    pub samplerate:        f32,
+    pub baudrate:          u16,
+    pub low_freq:          f32,
+    pub high_freq:         f32,
+    pub threshold:         f32,
+    pub amplitude:         f32,
+    pub channels:          i32,
+    pub role:              Role,
+    pub modulation_method: ModulationMethod,
 }
 
 impl Default for ModemConfig {
     fn default() -> Self {
-        let mut conf = Self {
-            samplerate: 44100f32,
-            baudrate: 100,
-            latency: Default::default(),
-            low_freq: 220f32,
-            high_freq: 440f32,
-            threshold: 300f32,
-            amplitude: i16::MAX as f32,
-            channels: 1,
-            role: Role::Receiver,
-        };
-        conf.latency = 1.0 / conf.baudrate as f64 * conf.samplerate as f64;
-        conf
+        Self {
+            samplerate:        44100f32,
+            baudrate:          100,
+            low_freq:          1200f32,
+            high_freq:         2400f32,
+            threshold:         50f32,
+            amplitude:         i16::MAX as f32,
+            channels:          1,
+            role:              Role::Receiver,
+            modulation_method: ModulationMethod::BFSK,
+        }
+    }
+}
+
+impl ModemConfig {
+    pub fn latency(&self) -> f32 {
+        (1.0 / self.baudrate as f32 * self.samplerate as f32).floor()
     }
 }

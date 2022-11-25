@@ -56,7 +56,7 @@ pub fn char_to_bin_u8(buf: &mut [u8; 8], dec: u8) {
 
 #[cfg(test)]
 mod tests {
-    use crate::binary::{char_to_bin_u8, decode_u8, encode_u8};
+    use crate::ascii::{char_to_bin_u8, decode_u8, encode_u8};
 
     #[test]
     fn test_str_to_binary() {
