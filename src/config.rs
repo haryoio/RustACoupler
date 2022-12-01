@@ -1,5 +1,3 @@
-use portaudio::stream::Mode;
-
 use crate::{
     ascii,
     hamming,
@@ -33,9 +31,9 @@ impl Default for ModemConfig {
         Self {
             samplerate:        44100f32,
             baudrate:          100,
-            low_freq:          1200f32,
+            low_freq:          2000f32,
             high_freq:         2400f32,
-            threshold:         50f32,
+            threshold:         200f32,
             amplitude:         i16::MAX as f32,
             channels:          1,
             role:              Role::Receiver,

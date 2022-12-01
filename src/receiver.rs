@@ -3,8 +3,12 @@ use std::{
     collections::VecDeque,
     f32::consts::PI,
     fs::File,
-    io::{self, BufReader, Read, Write},
-    sync::{mpsc::channel, Arc, Mutex},
+    io::{self, BufReader, Error, Read, Write},
+    sync::{
+        mpsc::{self, channel, Receiver as MPReceiver, Sender},
+        Arc,
+        Mutex,
+    },
     thread,
     time::Duration,
 };
@@ -17,7 +21,6 @@ use cpal::{
 };
 use itertools::Itertools;
 use nalgebra::Complex;
-use portaudio as pa;
 use ringbuf::HeapRb;
 use rustfft::FftPlanner;
 
@@ -35,15 +38,22 @@ use crate::{
 #[derive(Clone)]
 pub struct Receiver {
     pub(crate) config: ModemConfig,
+    pub rx:            Arc<Mutex<MPReceiver<String>>>,
+    pub tx:            Arc<Mutex<Sender<String>>>,
 }
 
 impl Receiver {
     pub fn new(config: ModemConfig) -> Receiver {
-        return Receiver { config };
+        let (tx, rx) = mpsc::channel::<String>();
+        return Receiver {
+            config,
+            rx: Arc::new(Mutex::new(rx)),
+            tx: Arc::new(Mutex::new(tx)),
+        };
     }
 
-    pub fn run(&mut self) -> Result<(), pa::Error> {
-        let mut status = Arc::new(Mutex::new(Status::LISTENING));
+    pub fn run(&mut self) -> Result<String, Error> {
+        let status = Arc::new(Mutex::new(Status::LISTENING));
 
         let host = cpal::default_host();
         let input_device = host
@@ -60,11 +70,10 @@ impl Receiver {
             buffer_size: cpal::BufferSize::Fixed(self.config.latency() as u32),
         };
 
-        let ind = self.config.latency() as usize;
-        let ring = HeapRb::<Vec<f32>>::new(ind);
+        let ring = HeapRb::<Vec<f32>>::new(self.config.latency() as usize);
         let (mut in_producer, mut in_consumer) = ring.split();
 
-        let out_ring = HeapRb::<f32>::new(ind);
+        let out_ring = HeapRb::<f32>::new(self.config.latency() as usize);
         let (mut out_producer, mut out_consumer) = out_ring.split();
 
         let input_data_fn = move |data: &[f32], _: &cpal::InputCallbackInfo| {
@@ -73,11 +82,10 @@ impl Receiver {
             }
         };
 
-        let output_status = Arc::clone(&status);
         let output_data_fn = move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
             for sample in data.iter_mut() {
-                if let Some(da) = out_consumer.pop() {
-                    *sample = da;
+                if let Some(s) = out_consumer.pop() {
+                    *sample = s;
                 } else {
                     *sample = 0.0;
                 }
@@ -94,6 +102,14 @@ impl Receiver {
         input_stream.play().expect("cannot start input stream");
         output_stream.play().expect("cannot start output stream");
 
+        // let spec = hound::WavSpec {
+        //     channels:        1,
+        //     sample_rate:     self.config.samplerate as u32,
+        //     bits_per_sample: 32,
+        //     sample_format:   hound::SampleFormat::Float,
+        // };
+        // let mut writer = hound::WavWriter::create("one.wav", spec).unwrap();
+
         let co = self.clone();
         let mut handles = vec![];
 
@@ -101,15 +117,26 @@ impl Receiver {
         let mut input_data = vec![];
         let status = Arc::clone(&status);
         handles.push(thread::spawn(move || {
-            'main: loop {
+            loop {
                 if let Some(sample) = in_consumer.pop() {
+                    let sample = if co.config.modulation_method == ModulationMethod::BFSK {
+                        co.lowpass_filter(&sample)
+                    } else {
+                        sample
+                    };
+
+                    // for s in sample.clone() {
+                    //     writer.write_sample(s / i16::MAX as f32).unwrap();
+                    // }
                     let resfreq = fftfreq(sample, co.config.samplerate)
                         .expect("failed to get max frequency.");
-                    // println!("resfreq: {}", resfreq);
+                    if resfreq != 10900.0 {
+                        // println!("resfreq: {}", resfreq);
+                    }
 
                     let bit = match co.config.modulation_method {
                         ModulationMethod::BFSK => {
-                            let bit = co.detect_bfsk_carrier(resfreq);
+                            let bit = co.detect_bfsk(resfreq);
 
                             recent_bin.push_back(bit);
                             recent_bin.pop_front();
@@ -117,21 +144,20 @@ impl Receiver {
                             vec![bit]
                         }
                         ModulationMethod::QFSK => {
-                            let bits = co.detect_qfsk_carrier(resfreq);
+                            let bits = co.detect_qfsk(resfreq);
                             recent_bin.pop_front();
                             recent_bin.pop_front();
-                            recent_bin.push_back(bits[1]);
                             recent_bin.push_back(bits[0]);
+                            recent_bin.push_back(bits[1]);
 
                             bits
                         }
                     };
-                    // println!("bit: {:?}", bit);
 
                     let status_l = *status.lock().unwrap();
                     match status_l {
                         Status::LISTENING => {
-                            // println!("rec {:?}", recent_bin);
+                            // println!("{:2?}", recent_bin);
                             if co.check_syn(&recent_bin) {
                                 recent_bin = vec![0; 8].into();
                                 {
@@ -142,12 +168,19 @@ impl Receiver {
                         Status::RECEIVING => {
                             input_data.extend(bit);
                             if input_data.len() % 8 == 0 && co.check_syn(&recent_bin) {
-                                let correct_data = correct_hamming_code(
+                                let mut correct_data = correct_hamming_code(
                                     input_data.clone().iter().map(|d| *d as u8).collect_vec(),
                                 );
-                                // println!("{:?}", correct_data);
-                                let decoded: String = decode_u8(correct_data).into_iter().collect();
-                                println!("{}", decoded);
+                                correct_data = correct_data[..correct_data.len() - 4].to_vec();
+
+                                let decoded: String = decode_u8(correct_data);
+                                println!("recv << {}", decoded);
+                                return decoded;
+
+                                if let Err(e) = co.tx.lock().unwrap().send(decoded) {
+                                    eprintln!("ERROR: {:?}", e);
+                                }
+
                                 *status.lock().unwrap() = Status::ANSWER;
                                 input_data.clear();
                             }
@@ -168,9 +201,32 @@ impl Receiver {
         }));
 
         for handle in handles {
-            handle.join().unwrap();
+            if let Err(e) = handle.join() {
+                eprintln!("ERROR: {:?}", e);
+            };
         }
-        Ok(())
+        Ok(String::new())
+    }
+
+    fn lowpass_filter(&self, data: &Vec<f32>) -> Vec<f32> {
+        use biquad::*;
+        let sr = (self.config.samplerate).hz();
+        let f0 = match self.config.modulation_method {
+            ModulationMethod::BFSK => 2800.hz(),
+            ModulationMethod::QFSK => 4800.hz(),
+        };
+
+        let coeffs =
+            Coefficients::<f32>::from_params(Type::SinglePoleLowPass, sr, f0, Q_BUTTERWORTH_F32)
+                .unwrap();
+
+        let mut biquad1 = DirectForm1::<f32>::new(coeffs);
+
+        let mut res = vec![];
+        for sample in data {
+            res.push(biquad1.run(*sample));
+        }
+        res
     }
 
     fn check_syn(&self, data: &VecDeque<i8>) -> bool {
@@ -185,16 +241,16 @@ impl Receiver {
         ok_syn
     }
 
-    fn detect_qfsk_carrier(&self, freq: f32) -> Vec<i8> {
+    fn detect_qfsk(&self, freq: f32) -> Vec<i8> {
         let threshold = self.config.threshold.clone();
         let in_range = |res_freq: f32, target_freq: f32| -> bool {
             res_freq >= (target_freq - threshold) && res_freq <= target_freq + threshold
         };
 
         let z_z = self.config.low_freq;
-        let z_o = self.config.low_freq * 1.5;
-        let o_z = self.config.low_freq * 2.0;
-        let o_o = self.config.low_freq * 2.5;
+        let z_o = self.config.low_freq + 400f32;
+        let o_z = self.config.low_freq + 1200f32;
+        let o_o = self.config.low_freq + 2400f32;
 
         if in_range(freq, z_z) {
             return vec![0, 0];
@@ -209,7 +265,7 @@ impl Receiver {
         }
     }
 
-    fn detect_bfsk_carrier(&self, freq: f32) -> i8 {
+    fn detect_bfsk(&self, freq: f32) -> i8 {
         let threshold = self.config.threshold.clone();
         let in_low_range = move |res: f32| -> bool {
             res >= (self.config.low_freq - threshold) && res <= self.config.low_freq + threshold

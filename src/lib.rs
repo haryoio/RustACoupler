@@ -18,7 +18,7 @@ pub enum Status {
     RECEIVING,
     ANSWER,
 }
-#[derive(Debug, Clone, Copy)]
+#[derive(PartialEq, Debug, Clone, Copy)]
 pub enum ModulationMethod {
     BFSK,
     QFSK,

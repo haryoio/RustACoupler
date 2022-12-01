@@ -1,27 +1,12 @@
-extern crate rust_a_coupler;
-use std::{f32::consts::PI, i16, sync::mpsc};
+extern crate popemodem;
 
-use hound::{self, WavWriter};
-use itertools::Itertools;
-use itertools_num::ItertoolsNum;
-use portaudio as pa;
-use rust_a_coupler::{
-    config::ModemConfig,
-    receiver::Receiver,
-    transmitter::Transmitter,
-    utils::repeat,
-    ModulationMethod,
-};
+use std::io::Error;
 
-use crate::rust_a_coupler::ascii::encode_u8;
+use popemodem::{config::ModemConfig, receiver::Receiver, ModulationMethod};
 
-enum Status {
-    WAIT,
-    READY,
-}
-fn main() -> Result<(), pa::Error> {
+fn main() -> Result<(), Error> {
     let mut config = ModemConfig::default();
-    // config.modulation_method = ModulationMethod::QFSK;
+    config.modulation_method = ModulationMethod::QFSK;
     let mut recv = Receiver::new(config);
 
     recv.run().unwrap();

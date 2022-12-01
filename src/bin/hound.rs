@@ -3,8 +3,8 @@ extern crate rustfft;
 
 use hound::WavReader;
 use num::complex::Complex;
+use popemodem::receiver::fftfreq;
 use ringbuf::HeapRb;
-use rust_a_coupler::receiver::fftfreq;
 use rustfft::FftPlanner;
 
 fn find_peak_freqs(filename: &str) -> Vec<f32> {

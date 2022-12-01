@@ -12,27 +12,22 @@ pub fn encode_u8(data: &str) -> Vec<u8> {
     res
 }
 
-pub fn decode_u8(bin: Vec<u8>) -> Vec<char> {
-    // 整数値に変換された値を保存する配列
-    let mut decs = vec![];
-    // 8文字ずつバイナリを変換していくため使用する配列
-    let tmp = RefCell::new(vec![]);
-
-    for b in bin {
-        tmp.borrow_mut().push(b);
-
-        if tmp.borrow_mut().len() == 8 {
-            let mut tmp_str = "".to_string();
-            for c in tmp.borrow().iter() {
-                tmp_str.push_str(&format!("{}", c));
-            }
-            let dec = u8::from_str_radix(&tmp_str, 2).unwrap();
-            decs.push(dec as char);
-            tmp.borrow_mut().clear();
+pub fn decode_u8(bin: Vec<u8>) -> String {
+    if bin.len() % 8 != 0 {
+        return format!("Invalid binary data len: {}", bin.len());
+    }
+    let mut buf: Vec<u8> = Vec::with_capacity(bin.len() / 8);
+    for (i, c) in bin.chunks(8).enumerate() {
+        let mut a: u8 = 0;
+        for (b, j) in c.iter().enumerate() {
+            a = a | (j << (7 - b));
         }
+        buf.push(a);
     }
 
-    decs
+    let res: String = buf.iter().map(|e| *e as char).collect();
+
+    res
 }
 
 pub fn char_to_bin_u8(buf: &mut [u8; 8], dec: u8) {
@@ -72,5 +67,14 @@ mod tests {
         let mut buf: [u8; 8] = [0; 8];
         char_to_bin_u8(&mut buf, dec);
         println!("{:?}", buf);
+    }
+    #[test]
+    fn test_vec_to_u8() {
+        let v = vec![0, 1, 0, 1, 0, 1, 0, 1];
+        let mut a: u8 = 0;
+        for (b, i) in v.iter().enumerate() {
+            a = a | (i << (7 - b));
+        }
+        println!("{:08b}", a);
     }
 }
