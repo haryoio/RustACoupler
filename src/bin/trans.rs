@@ -1,38 +1,94 @@
 extern crate popemodem;
-use std::{env, f32::consts::PI, i16, io::Error, sync::mpsc, thread, time::Duration};
-
-use hound::{self, WavWriter};
-use itertools::Itertools;
-use itertools_num::ItertoolsNum;
-use popemodem::{
-    config::ModemConfig,
-    receiver::Receiver,
-    save::save_wav,
-    transmitter::Transmitter,
-    utils::repeat,
-    ModulationMethod,
+use std::{
+    io::{self, BufRead, BufReader},
+    sync::{mpsc, RwLock},
+    thread,
 };
 
-use crate::popemodem::ascii::encode_u8;
+use popemodem::{
+    bytes::decode_u8,
+    config::ModemConfig,
+    datalink::frame::Datalink,
+    error::Error,
+    modem::Modem,
+};
 
+static mut CONNECTIONS: RwLock<Vec<Datalink>> = RwLock::new(Vec::new());
+
+// #[tokio::main]
 fn main() -> Result<(), Error> {
-    let args: Vec<String> = env::args().collect();
-    let mut send_data = "n";
-    // if args.len() < 2 {
-    //     println!("Usage: {} [send|recv]", args[0]);
-    //     return Ok(());
-    // }
-    if args.len() >= 2 {
-        send_data = &args[1];
+    // let args: Vec<String> = env::args().collect();
+
+    let mut n_tasks = vec![];
+
+    n_tasks.push(thread::spawn(|| {
+        let (tx, rx) = mpsc::channel();
+        thread::spawn(move || {
+            let config = ModemConfig::default();
+            let mut modem = Modem::new(config);
+            modem.record(tx);
+        })
+        .join()
+        .unwrap();
+        loop {
+            if let Ok(data) = rx.recv() {
+                unsafe { CONNECTIONS.write().unwrap().push(data) };
+            }
+        }
+    }));
+
+    n_tasks.push(thread::spawn(move || {
+        println!("Starting modem");
+
+        let (send, recv) = mpsc::channel();
+
+        let mut tasks = vec![];
+
+        let sender = send.clone();
+        tasks.push(thread::spawn(move || {
+            let stdin = io::stdin();
+            let reader = BufReader::new(stdin);
+            let mut lines = reader.lines();
+
+            loop {
+                for line in lines.by_ref() {
+                    let line = line.unwrap();
+                    sender.send((line, 255, 0)).unwrap();
+                }
+            }
+        }));
+
+        tasks.push(thread::spawn(move || {
+            loop {
+                unsafe {
+                    CONNECTIONS.read().unwrap().iter().for_each(|c| {
+                        if c.sequence_number == 0 {
+                            send.send((
+                                decode_u8(c.data.clone()),
+                                c.source_address,
+                                c.sequence_number + 1,
+                            ))
+                            .unwrap();
+                        }
+                    });
+                }
+            }
+        }));
+
+        let config = ModemConfig::default();
+        let modem = Modem::new(config);
+        while let Ok((line, dst, seq)) = recv.recv() {
+            modem.transmit(&line, dst, seq);
+        }
+
+        for task in tasks {
+            task.join().expect("Failed to join task");
+        }
+    }));
+
+    for task in n_tasks {
+        task.join().expect("Failed to join task");
     }
 
-    let mut config = ModemConfig::default();
-    config.modulation_method = ModulationMethod::QFSK;
-    let mut trans = Transmitter::new(config.clone());
-    let data = trans.fsk(&send_data);
-    // let data = trans.bfsk(&send_data);
-    // save_wav("bandpass.wav", data.clone(), config.samplerate as u32);
-    trans.play(&data);
-
-    return Ok(());
+    Ok(())
 }
