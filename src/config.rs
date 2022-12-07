@@ -1,36 +1,29 @@
-use crate::ModulationMethod;
-
-#[derive(Clone, Debug)]
-pub enum Role {
-    Transmitter,
-    Receiver,
-}
-
 #[derive(Clone, Debug)]
 pub struct ModemConfig {
-    pub samplerate:        u32,
-    pub baudrate:          u16,
-    pub carrier:           f32,
-    pub deviation:         f32,
-    pub threshold:         u32,
-    pub amplitude:         f32,
-    pub channels:          u8,
-    pub role:              Role,
-    pub modulation_method: ModulationMethod,
+    pub samplerate: u32,
+    pub baudrate:   u16,
+    pub carrier:    f32,
+    pub deviation:  f32,
+    pub threshold:  u32,
+    pub amplitude:  f32,
+    pub channels:   u8,
+}
+
+enum CarrierFreq {
+    FreqMin4650Car4800Max5250,
+    FreqMin4350Car4500Max4650,
 }
 
 impl Default for ModemConfig {
     fn default() -> Self {
         Self {
-            samplerate:        44100,
-            baudrate:          100,
-            carrier:           1200f32,
-            deviation:         2400f32,
-            threshold:         200,
-            amplitude:         i16::MAX as f32,
-            channels:          1,
-            role:              Role::Receiver,
-            modulation_method: ModulationMethod::BFSK,
+            samplerate: 44100,
+            baudrate:   100,
+            carrier:    4800f32,
+            deviation:  300f32,
+            threshold:  150,
+            amplitude:  i16::MAX as f32,
+            channels:   1,
         }
     }
 }
@@ -60,11 +53,5 @@ impl ModemConfig {
     }
     pub fn set_channels(&mut self, channels: u8) {
         self.channels = channels;
-    }
-    pub fn set_role(&mut self, role: Role) {
-        self.role = role;
-    }
-    pub fn set_modulation_method(&mut self, modulation_method: ModulationMethod) {
-        self.modulation_method = modulation_method;
     }
 }

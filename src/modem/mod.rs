@@ -29,7 +29,6 @@ pub trait ModemTrait {
     fn transmit(&self, samples: &[f32]);
     fn receive(&self, samples: &[f32]) -> String;
 }
-
 pub struct Modem {
     samplerate: u32,
     baudrate:   u16,
@@ -155,7 +154,6 @@ impl Modem {
                     Status::LISTENING => {
                         if bin == ISFD {
                             status = Status::RECEIVING;
-                            // println!("SFD detected");
                         }
                     }
                     Status::RECEIVING => {
