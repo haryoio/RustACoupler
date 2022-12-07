@@ -1,4 +1,4 @@
-use clap::Parser;
+use clap::{Parser, Subcommand};
 
 #[derive(Debug, Parser)]
 #[clap(
@@ -27,4 +27,24 @@ pub struct Args {
 
     #[clap(short = 'r', long = "resend")]
     pub resending: bool,
+}
+
+#[derive(Debug, Subcommand)]
+enum Command {
+    #[clap(name = "send")]
+    Send {
+        #[clap(short = 't', long = "target", default_value = "0")]
+        target:  u8,
+        #[clap(short = 'm', long = "message")]
+        message: String,
+    },
+    #[clap(name = "receive")]
+    Receive,
+    #[clap(name = "list")]
+    List {
+        #[clap(short = 'i', long = "input")]
+        input:  bool,
+        #[clap(short = 'o', long = "output")]
+        output: bool,
+    },
 }

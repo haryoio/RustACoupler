@@ -11,7 +11,7 @@ pub struct ModemConfig {
 
 enum CarrierFreq {
     FreqMin4650Car4800Max5250,
-    FreqMin4350Car4500Max4650,
+    FreqMin4050Car4200Max4650,
 }
 
 impl Default for ModemConfig {

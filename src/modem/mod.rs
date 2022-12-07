@@ -79,7 +79,7 @@ impl Modem {
             (samplerate as usize).try_into().unwrap(),
             latency as usize,
         );
-        let mut speaker = Speaker::new(samplerate, latency as u32, channels as u16);
+        let mut speaker = Speaker::new(samplerate, baudrate as u32, channels as u16);
 
         speaker.play(samples);
     }

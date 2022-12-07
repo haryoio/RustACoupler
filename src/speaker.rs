@@ -15,28 +15,25 @@ use ringbuf::{HeapRb, Producer, SharedRb};
 pub struct Speaker {
     samplerate: u32,
     latency:    u32,
+    baudrate:   u32,
     channels:   u16,
     device:     Option<String>,
 }
 
 type StreamProducer<T> = Producer<T, Arc<SharedRb<T, Vec<MaybeUninit<T>>>>>;
 
-#[cfg(target_os = "linux")]
-pub struct SpeakerStream {
-    pub producer: StreamProducer<f32>,
-    pub stream:   Arc<Mutex<PlatformStream>>,
-}
-#[cfg(target_os = "macos")]
 pub struct SpeakerStream {
     pub producer: StreamProducer<f32>,
     pub stream:   Arc<Mutex<PlatformStream>>,
 }
 
 impl Speaker {
-    pub fn new(samplerate: u32, latency: u32, channels: u16) -> Self {
+    pub fn new(samplerate: u32, baudrate: u32, channels: u16) -> Self {
+        let latency = (1.0 / baudrate as f32 * samplerate as f32) as u32;
         Speaker {
             samplerate,
             latency,
+            baudrate,
             channels,
             device: None,
         }
@@ -51,6 +48,13 @@ impl Speaker {
         let output_device = host
             .default_output_device()
             .expect("failed to find output device");
+        let supported_stream_config = output_device
+            .supported_output_configs()
+            .expect("error while querying configs");
+        for config in supported_stream_config {
+            self.samplerate = config.max_sample_rate().0;
+            self.latency = (1.0 / self.baudrate as f32 * self.samplerate as f32) as u32;
+        }
 
         let err_fn = |err| eprintln!("an error occurred on stream: {}", err);
         let stream_config = StreamConfig {
