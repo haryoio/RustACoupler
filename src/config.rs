@@ -25,7 +25,7 @@ impl Default for ModemConfig {
             samplerate:        44100,
             baudrate:          100,
             carrier:           1200f32,
-            deviation:         1200f32,
+            deviation:         2400f32,
             threshold:         200,
             amplitude:         i16::MAX as f32,
             channels:          1,

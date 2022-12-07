@@ -1,6 +1,5 @@
 use crc::{Crc, CRC_32_MPEG_2};
 
-use super::enums::FrameType;
 use crate::{
     bytes::{
         u16_from_bytes,
@@ -31,7 +30,7 @@ pub const CRC: Crc<u32> = Crc::<u32>::new(&CRC_32_MPEG_2);
 /// 0x4-0xF: Reserved
 #[derive(Debug, Clone)]
 pub struct Datalink {
-    frame_type:              FrameType,
+    pub frame_type:          FrameType,
     pub destination_address: u8,
     pub source_address:      u8,
     pub sequence_number:     u16,
@@ -112,5 +111,61 @@ impl Datalink {
         frame.extend(u32_to_bytes(fcs));
 
         frame
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum FrameType {
+    Data,
+    Acknowledgement,
+    Beacon,
+    Command,
+    Error,
+}
+
+impl FrameType {
+    pub fn is_data(&self) -> bool {
+        matches!(self, FrameType::Data)
+    }
+    pub fn is_acknowledgement(&self) -> bool {
+        matches!(self, FrameType::Acknowledgement)
+    }
+    pub fn is_beacon(&self) -> bool {
+        matches!(self, FrameType::Beacon)
+    }
+    pub fn is_command(&self) -> bool {
+        matches!(self, FrameType::Command)
+    }
+    pub fn to_bytes(&self) -> [u8; 4] {
+        match self {
+            FrameType::Data => [0, 0, 0, 0],
+            FrameType::Acknowledgement => [0, 0, 0, 1],
+            FrameType::Beacon => [0, 0, 1, 0],
+            FrameType::Command => [0, 0, 1, 1],
+            FrameType::Error => [1, 1, 1, 1],
+        }
+    }
+}
+
+impl From<&[u8]> for FrameType {
+    fn from(bytes: &[u8]) -> Self {
+        match bytes {
+            [0, 0, 0, 0] => FrameType::Data,
+            [0, 0, 0, 1] => FrameType::Acknowledgement,
+            [0, 0, 1, 0] => FrameType::Beacon,
+            [0, 0, 1, 1] => FrameType::Command,
+            _ => FrameType::Error,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_frame_type() {
+        let frame_type = FrameType::from(vec![0, 0, 0, 0].as_slice());
+        assert!(frame_type.is_data());
     }
 }

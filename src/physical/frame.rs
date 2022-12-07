@@ -11,11 +11,10 @@ use crate::{
 
 pub const CRC: Crc<u16> = Crc::<u16>::new(&CRC_16_IBM_SDLC);
 
-/// +----------+--------+------------------+--------+--------+---------+
-/// | Preamble |  SFD   |  Modulation Type | length |  CRC   | Payload |
-/// +----------+--------+------------------+--------+--------+---------+
-/// | 1 byte   | 1 byte |  4 bit           | 2 byte | 2 byte | ...     |
-/// +----------+--------+------------------+--------+--------+---------+
+/// | Preamble |  SFD   | Modulation Type | length |  CRC   | Payload |
+/// |----------|--------|-----------------|--------|--------|---------|
+/// | 8 bit    | 8bit   | 4 bit           | 16 bit | 16 bit | ...     |
+
 #[derive(Debug)]
 pub struct Physical {
     pub mod_type:        ModulationType,
@@ -67,13 +66,14 @@ impl Display for Physical {
 #[derive(Debug)]
 pub enum ModulationType {
     BfskNoErrorCorrection,
+    Invalid,
 }
 
 impl From<&[u8]> for ModulationType {
     fn from(bytes: &[u8]) -> Self {
         match bytes {
             [0, 0, 0, 1] => ModulationType::BfskNoErrorCorrection,
-            _ => panic!("Unknown modulation type"),
+            _ => ModulationType::Invalid,
         }
     }
 }
@@ -82,6 +82,7 @@ impl ModulationType {
     pub fn to_bytes(&self) -> [u8; 4] {
         match self {
             ModulationType::BfskNoErrorCorrection => [0, 0, 0, 1],
+            ModulationType::Invalid => [1, 1, 1, 1],
         }
     }
 }
@@ -90,6 +91,7 @@ impl Display for ModulationType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ModulationType::BfskNoErrorCorrection => write!(f, "BFSK no error correction"),
+            ModulationType::Invalid => write!(f, "Invalid"),
         }
     }
 }

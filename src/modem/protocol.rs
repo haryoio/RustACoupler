@@ -1,7 +1,8 @@
 use crate::{
-    datalink::{enums::FrameType, frame::Datalink},
+    bytes::encode_u8,
+    datalink::frame::{Datalink, FrameType},
     error::{Error, Result},
-    physical::frame::Physical,
+    physical::frame::{ModulationType, Physical},
 };
 #[derive(Debug)]
 pub struct Protocol {
@@ -10,11 +11,11 @@ pub struct Protocol {
 }
 
 impl Protocol {
-    pub fn new(data: Vec<u8>, src: u8, dst: u8, seq: u16) -> Self {
-        let datalink = Datalink::new(FrameType::Data, dst, src, seq, data);
+    pub fn new(data: &str, src: u8, dst: u8, seq: u16, f_type: FrameType) -> Self {
+        let datalink = Datalink::new(f_type, dst, src, seq, encode_u8(data));
         let physical = Physical::new(
             datalink.to_bytes().len() as u16,
-            crate::physical::frame::ModulationType::BfskNoErrorCorrection,
+            ModulationType::BfskNoErrorCorrection,
         );
 
         Self { datalink, physical }
@@ -29,7 +30,7 @@ impl Protocol {
         bytes
     }
 
-    pub fn parse(bytes: &[u8]) -> Result<Self> {
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
         if bytes.len() < 68 {
             return Err(Error::InvalidFrameLength);
         }

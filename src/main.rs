@@ -5,6 +5,7 @@ use std::{
     net::TcpListener,
     sync::{Arc, Mutex},
     thread::{self, sleep},
+    time::Duration,
 };
 
 // アドレスとポートを指定
@@ -34,7 +35,7 @@ fn main() {
     }));
     handles.push(thread::spawn(move || {
         loop {
-            sleep(tokio::time::Duration::from_millis(10));
+            sleep(Duration::from_millis(10));
             socket3.lock().unwrap().write_all(".".as_bytes()).unwrap();
             socket3.lock().unwrap().flush().unwrap();
         }

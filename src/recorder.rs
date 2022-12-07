@@ -101,8 +101,6 @@ impl Recorder {
             buffer_size: cpal::BufferSize::Fixed(self.latency),
         };
 
-        // let ring = HeapRb::<Vec<f32>>::new(self.latency as usize);
-        // let (producer, consumer) = mpsc::channel::<Vec<f32>>();
         let (producer, consumer) = mpsc::channel();
 
         let input_data_fn = move |data: &[f32], _: &cpal::InputCallbackInfo| {
@@ -117,19 +115,13 @@ impl Recorder {
         // 録音開始
         self.running.write().unwrap().store(true, Ordering::Relaxed);
         stream.play().expect("failed to play stream");
-        println!("recording...");
-
         let mut recent_bin: VecDeque<i8> = vec![-1; 8].into();
         let mut input_data: VecDeque<i8> = vec![].into();
-
-        // recorder_stream.stream.lock().unwrap().play().unwrap();
-        // let consumer = recorder_stream.consumer;
 
         let mut frame_length = 0;
         let mut phy_frame: Option<Physical> = None;
         let mut status = Status::LISTENING;
 
-        println!("start demodulatoin");
         loop {
             if let Ok(sample) = consumer.recv() {
                 // println!("recv");
@@ -166,7 +158,7 @@ impl Recorder {
                         // println!("bin: {:?}", recent_bin);
                         if bin == ISFD {
                             status = Status::RECEIVING;
-                            println!("SFD detected");
+                            // println!("SFD detected");
                         }
                     }
                     Status::RECEIVING => {
@@ -182,7 +174,7 @@ impl Recorder {
                             }
                             let frame_arr = frame_arr.map(|b| b as u8);
                             let frame = Physical::from_bytes(&frame_arr).unwrap();
-                            println!("frame: {:?}", frame);
+                            // println!("frame: {:?}", frame);
                             frame_length = frame.length as usize;
                             phy_frame = Some(frame);
                             input_data.clear();
@@ -192,7 +184,7 @@ impl Recorder {
                         }
                         if frame_length == 0 && phy_frame.is_some() {
                             status = Status::ANSWER;
-                            println!("frame received");
+                            // println!("frame received");
                         }
                         // recent_bin.clear();
                     }

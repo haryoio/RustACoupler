@@ -1,6 +1,6 @@
 use std::f32::consts::PI;
 
-use nalgebra::Complex;
+use num::Complex;
 use rustfft::FftPlanner;
 
 #[inline]

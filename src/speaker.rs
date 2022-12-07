@@ -1,6 +1,6 @@
 use std::{
     mem::MaybeUninit,
-    sync::Arc,
+    sync::{Arc, Mutex},
     thread::sleep,
     time::{Duration, Instant},
 };
@@ -11,7 +11,6 @@ use cpal::{
     StreamConfig,
 };
 use ringbuf::{HeapRb, Producer, SharedRb};
-use tokio::sync::Mutex;
 
 pub struct Speaker {
     samplerate: u32,
@@ -48,7 +47,6 @@ impl Speaker {
     }
 
     pub fn play(&mut self, wave: Vec<f32>) {
-        // self.cb = cb;
         let host = cpal::default_host();
         let output_device = host
             .default_output_device()
@@ -61,16 +59,17 @@ impl Speaker {
             buffer_size: cpal::BufferSize::Fixed(self.latency),
         };
 
-        let out_ring = HeapRb::<f32>::new((self.samplerate * self.latency).try_into().unwrap());
+        let out_ring =
+            HeapRb::<Vec<f32>>::new((self.samplerate * self.latency).try_into().unwrap());
         let (mut out_producer, mut out_consumer) = out_ring.split();
 
         let output_data_fn = move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-            // println!("o");
-            for sample in data.iter_mut() {
-                if let Some(t) = out_consumer.pop() {
-                    // println!("send");
-                    *sample = 0.5 * (t / i16::MAX as f32);
-                } else {
+            if let Some(samples) = out_consumer.pop() {
+                for (sample, wav) in data.iter_mut().zip(samples) {
+                    *sample = 0.5 * (wav / i16::MAX as f32);
+                }
+            } else {
+                for sample in data.iter_mut() {
                     *sample = 0.0;
                 }
             }
@@ -81,40 +80,19 @@ impl Speaker {
             .expect("failed to build output stream");
         stream.play().unwrap();
 
-        let start = Instant::now();
-
         let time_to_wait = &(1.0 / self.samplerate as f64);
 
-        while start
-            .elapsed()
-            .as_secs_f64()
-            .lt(&(time_to_wait * wave.len() as f64))
-        {
-            for w in &wave {
-                if let Err(e) = out_producer.push(*w) {
-                    println!("error: {}", e);
+        loop {
+            for samples in wave.chunks(self.latency as usize) {
+                if let Err(e) = out_producer.push(samples.to_vec()) {
+                    println!("Error: {:?}", e);
                 }
+                sleep(Duration::from_secs_f64(self.latency as f64 * time_to_wait));
             }
-            sleep(Duration::from_millis(1));
+            sleep(Duration::from_secs_f64(self.latency as f64 * time_to_wait));
+            break;
         }
-
-        // loop {
-        //     counter += 1;
-        //     if counter >= waves_len {
-        //         println!("done send");
-        //         break;
-        //     }
-        // }
-
-        // stream.pause().unwrap();
-        // drop(stream);
     }
-
-    // pub fn pause(&mut self) {
-    //     self.running
-    //         .blocking_write()
-    //         .store(false, Ordering::Relaxed);
-    // }
 }
 
 #[cfg(test)]
