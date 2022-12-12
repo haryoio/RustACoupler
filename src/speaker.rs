@@ -48,13 +48,6 @@ impl Speaker {
         let output_device = host
             .default_output_device()
             .expect("failed to find output device");
-        let supported_stream_config = output_device
-            .supported_output_configs()
-            .expect("error while querying configs");
-        for config in supported_stream_config {
-            self.samplerate = config.max_sample_rate().0;
-            self.latency = (1.0 / self.baudrate as f32 * self.samplerate as f32) as u32;
-        }
 
         let err_fn = |err| eprintln!("an error occurred on stream: {}", err);
         let stream_config = StreamConfig {
@@ -62,6 +55,7 @@ impl Speaker {
             sample_rate: cpal::SampleRate(self.samplerate),
             buffer_size: cpal::BufferSize::Fixed(self.latency),
         };
+        // println!("{:?}", stream_config);
 
         let out_ring =
             HeapRb::<Vec<f32>>::new((self.samplerate * self.latency).try_into().unwrap());
@@ -102,7 +96,7 @@ impl Speaker {
 #[cfg(test)]
 mod speaker_tests {
     use super::*;
-    use crate::synthesizer::ocillator;
+    use crate::utils::ocillator;
 
     #[test]
     fn test_speaker() {

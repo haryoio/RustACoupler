@@ -14,7 +14,6 @@ pub const CRC: Crc<u16> = Crc::<u16>::new(&CRC_16_IBM_SDLC);
 /// | Preamble |  SFD   | Modulation Type | length |  CRC   | Payload |
 /// |----------|--------|-----------------|--------|--------|---------|
 /// | 8 bit    | 8bit   | 4 bit           | 16 bit | 16 bit | ...     |
-
 #[derive(Debug)]
 pub struct Physical {
     pub mod_type:        ModulationType,

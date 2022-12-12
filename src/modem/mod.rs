@@ -10,11 +10,15 @@ use cpal::{
 };
 use rand::Rng;
 
-use self::{demodulator::detect_bfsk, protocol::Protocol};
+use self::{
+    demodulator::{detect_bfsk, which_band},
+    filter::{highpass_filter, lowpass_filter},
+    modulator::ModulationFormat,
+};
 use crate::{
-    bytes::{decode_u8, encode_u8},
-    config::ModemConfig,
-    datalink::frame::{Datalink, FrameType},
+    bytes::decode_u8,
+    config::{Band, ModemConfig, BAND1, BAND2, BAND3},
+    datalink::frame::Datalink,
     modem::filter::fftfreq,
     physical::frame::Physical,
     speaker::Speaker,
@@ -22,22 +26,18 @@ use crate::{
     ISFD,
 };
 
-pub trait ModemTrait {
-    fn new(samplerate: usize, baudrate: usize, channels: u16) -> Self;
-    fn modulate(&self, data: &str) -> Vec<f32>;
-    fn demodulate(&self, data: &[f32]) -> String;
-    fn transmit(&self, samples: &[f32]);
-    fn receive(&self, samples: &[f32]) -> String;
-}
 pub struct Modem {
-    samplerate: u32,
-    baudrate:   u16,
-    channels:   u8,
-    carrier:    f32,
-    deviation:  f32,
-    threshold:  f32,
+    samplerate:        u32,
+    baudrate:          u16,
+    channels:          u8,
+    carrier:           f32,
+    deviation:         f32,
+    threshold:         f32,
+    modulation_format: ModulationFormat,
 
-    address: u8,
+    address:       u8,
+    input_device:  Option<String>,
+    output_device: Option<String>,
     // connections: Arc<RwLock<Vec<>>>
 }
 
@@ -51,16 +51,23 @@ impl Modem {
         let threshold = config.threshold as f32;
         let mut rng = rand::thread_rng();
         let address: u8 = rng.gen_range(0..254);
+        let modulation_format = config.modulation_format;
+        let input_device = config.input_device;
+        let output_device = config.output_device;
 
         Modem {
             samplerate,
             baudrate,
             channels,
-            carrier,
-            deviation,
+            carrier: carrier as f32,
+            deviation: deviation as f32,
             threshold,
 
             address,
+            modulation_format,
+
+            input_device,
+            output_device,
         }
     }
 
@@ -72,16 +79,74 @@ impl Modem {
         let channels = self.channels;
         let latency = 1.0 / baudrate as f32 * samplerate as f32;
 
-        let samples = modulator::bfsk(
+        // let samples = match self.modulation_format {
+        //     ModulationFormat::BFSK => {
+        //         modulator::bfsk(
+        //             &symbols,
+        //             carrier,
+        //             deviation,
+        //             (samplerate as usize).try_into().unwrap(),
+        //             latency as usize,
+        //         )
+        //     }
+        //     ModulationFormat::QFSK => {
+        //         modulator::qfsk(
+        //             &symbols,
+        //             carrier,
+        //             deviation,
+        //             samplerate as u32,
+        //             baudrate as usize,
+        //         )
+        //     }
+        //     ModulationFormat::BPSK => todo!(),
+        // };
+        let mut samples = vec![0f32; 7];
+        samples.extend(modulator::bfsk(
             &symbols,
             carrier,
             deviation,
-            (samplerate as usize).try_into().unwrap(),
+            samplerate as u32,
             latency as usize,
-        );
-        let mut speaker = Speaker::new(samplerate, baudrate as u32, channels as u16);
+        ));
 
+        let mut speaker = Speaker::new(samplerate, baudrate as u32, channels as u16);
+        // save_wave("fsk.wav", samples.clone(), samplerate);
         speaker.play(samples);
+    }
+
+    fn init_input_device(&mut self) -> cpal::Device {
+        let device = match self.input_device {
+            Some(ref device) => {
+                let host = cpal::default_host();
+                let input_device = host
+                    .input_devices()
+                    .expect("no input device available")
+                    .find(|d| d.name().unwrap() == *device)
+                    .expect("no input device available");
+                input_device
+            }
+            None => {
+                let host = cpal::default_host();
+                let input_device = host
+                    .default_input_device()
+                    .expect("no input device available");
+                input_device
+            }
+        };
+
+        let supported_stream_config_range = device
+            .supported_input_configs()
+            .expect("error while querying configs");
+
+        let supported_stream_config = supported_stream_config_range.filter(|c| {
+            c.max_sample_rate().0 >= self.samplerate && c.min_sample_rate().0 <= self.samplerate
+        });
+
+        if supported_stream_config.count() == 0 {
+            panic!("samplerate not supported");
+        }
+
+        device
     }
 
     pub fn record(&mut self, connection_tx: mpsc::Sender<Datalink>) {
@@ -94,10 +159,7 @@ impl Modem {
 
         let latency = 1.0 / baudrate as f32 * samplerate as f32;
 
-        let host = cpal::default_host();
-        let input_device = host
-            .default_input_device()
-            .expect("no input device available");
+        let input_device = self.init_input_device();
 
         let err_fn = |err| eprintln!("an error occurred on stream: {}", err);
 
@@ -117,10 +179,8 @@ impl Modem {
         let stream = input_device
             .build_input_stream(&stream_config, input_data_fn, err_fn)
             .expect("failed to build input stream");
-        // 録音開始
 
         stream.play().expect("failed to play stream");
-        // println!("recording...");
 
         let mut recent_bin: VecDeque<i8> = vec![-1; 8].into();
         let mut input_data: VecDeque<i8> = vec![].into();
@@ -129,35 +189,49 @@ impl Modem {
         let mut phy_frame: Option<Physical> = None;
         let mut status = Status::LISTENING;
 
-        // println!("start demodulatoin");
+        let current_band = Band::new(carrier as u32, deviation as u32, threshold as u32);
+
         loop {
             if let Ok(sample) = consumer.recv() {
-                let resfreq = fftfreq(sample, self.samplerate as f32).unwrap();
-
+                let sample = highpass_filter(&sample, samplerate as f32, 3000.0);
+                let sample = lowpass_filter(&sample, samplerate as f32, 5000.0);
+                let resfreq = fftfreq(&sample, samplerate).expect("failed to fftfreq");
                 if resfreq == 10900.0 {
                     continue;
                 }
+                // println!("{}", resfreq);
 
-                let bit = detect_bfsk(resfreq, carrier, deviation, threshold);
+                // 自分のバンドに入っている周波数は無視｡
+                if current_band.has_freq(resfreq) {
+                    // print!("!");
+                    continue;
+                }
+                // if BAND2.has_freq(resfreq) {
+                //     println!("band2 {}", resfreq);
+                // }
+
+                let bit = which_band(resfreq, vec![BAND1, BAND2, BAND3]);
                 recent_bin.push_back(bit);
                 recent_bin.pop_front();
-
-                let mut bin = [0i8; 8];
-                for (i, b) in recent_bin.iter().enumerate() {
-                    if i >= 8 {
-                        break;
-                    }
-                    bin[i] = *b;
-                }
+                // print!(" bit {:2?} ", bit);
 
                 match status {
                     Status::LISTENING => {
-                        if bin == ISFD {
+                        // println!("{:?}", recent_bin);
+                        if recent_bin == ISFD {
+                            println!("sfd received");
                             status = Status::RECEIVING;
                         }
                     }
                     Status::RECEIVING => {
                         input_data.push_back(bit);
+                        if bit.is_negative() {
+                            println!("{:?}", recent_bin);
+                            phy_frame = None;
+                            input_data.clear();
+                            frame_length = 0;
+                            status = Status::RESET;
+                        }
 
                         if input_data.len() == 36 && frame_length == 0 && phy_frame.is_none() {
                             let mut frame_arr = [0i8; 36];
@@ -169,7 +243,7 @@ impl Modem {
                             }
                             let frame_arr = frame_arr.map(|b| b as u8);
                             let frame = Physical::from_bytes(&frame_arr).unwrap();
-                            // println!("frame: {:?}", frame);
+
                             frame_length = frame.length as usize;
                             phy_frame = Some(frame);
                             input_data.clear();
@@ -192,11 +266,13 @@ impl Modem {
                             Ok(p) => p,
                             Err(e) => {
                                 println!("error: {:?}", e);
+                                status = Status::RESET;
                                 continue;
                             }
                         };
                         if proto.detect_checksum() {
                             // println!("checksum ok");
+                            println!("from: {}", proto.source_address);
                         } else {
                             println!("checksum error");
                         }
@@ -207,12 +283,15 @@ impl Modem {
                             let data = decode_u8(proto.data);
                             println!("<< {}", data);
                         }
+                        status = Status::RESET;
+                    }
+                    Status::RESET => {
                         phy_frame = None;
                         input_data.clear();
                         frame_length = 0;
+                        recent_bin = vec![-1; 8].into();
                         status = Status::LISTENING;
                     }
-                    Status::TRANSMITTING => {}
                 }
             }
         }

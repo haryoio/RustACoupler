@@ -6,9 +6,10 @@ pub mod error;
 pub mod hamming;
 pub mod modem;
 pub mod physical;
-// pub mod recorder;
+
+pub mod devices;
 pub mod speaker;
-pub mod synthesizer;
+
 pub mod utils;
 
 pub const DIAL_TONE: f32 = 800.0;
@@ -21,7 +22,7 @@ pub const ISFD: [i8; 8] = [0, 0, 0, 1, 0, 1, 1, 0];
 pub enum Status {
     LISTENING,
     RECEIVING,
-    TRANSMITTING,
+    RESET,
     ANSWER,
 }
 #[derive(PartialEq, Debug, Clone, Copy)]

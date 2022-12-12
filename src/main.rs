@@ -1,47 +1,108 @@
 extern crate popemodem;
-
 use std::{
-    io::{Read, Write},
-    net::TcpListener,
-    sync::{Arc, Mutex},
-    thread::{self, sleep},
-    time::Duration,
+    io::{self, BufRead, BufReader},
+    sync::{mpsc, Arc, RwLock},
+    thread,
 };
 
-// アドレスとポートを指定
-const SERVER_ADDRESS: &str = "127.0.0.1:8080";
+use byteorder::WriteBytesExt;
+use clap::Parser;
+use popemodem::{
+    args::{parse_args, Args},
+    datalink::frame::{Datalink, FrameType},
+    error::Error,
+    modem::{protocol::Protocol, Modem},
+};
 
-fn main() {
-    let listener = TcpListener::bind(SERVER_ADDRESS).unwrap();
+fn main() -> Result<(), Error> {
+    let args = Args::parse();
+    let src = args.address;
 
-    let (socket, mut _so) = listener.accept().unwrap();
-    // let (tx, rx) = channel(3);
+    let connections: Arc<RwLock<Vec<Datalink>>> = Arc::new(RwLock::new(Vec::new()));
 
-    // let rx = Arc::new(Mutex::new(rx));
-    let socket = Arc::new(Mutex::new(socket));
-    let socket3 = socket.clone();
-    let mut handles = vec![];
-    handles.push(thread::spawn(move || {
-        let mut buf = vec![0; 1024];
+    let config = parse_args(args)?;
+    // config.modulation_format = ModulationFormat::QFSK;
+    // let config = config;
 
-        match socket.lock().unwrap().read(&mut buf) {
-            Ok(0) => {}
-            Ok(n) => {
-                let a = &buf[..n];
-                print!("{}", String::from_utf8(a.to_vec()).unwrap());
+    let mut modem_tasks = vec![];
+    let connections_1 = connections.clone();
+    let receiver_config = config.clone();
+    modem_tasks.push(thread::spawn(move || {
+        let mut receivers_tasks = vec![];
+        let (tx, rx) = mpsc::channel();
+        receivers_tasks.push(thread::spawn(move || {
+            let mut modem = Modem::new(receiver_config);
+            modem.record(tx);
+        }));
+        receivers_tasks.push(thread::spawn(move || {
+            loop {
+                if let Ok(data) = rx.recv() {
+                    if let Ok(mut d) = connections_1.write() {
+                        d.push(data);
+                    }
+                }
             }
-            Err(_) => {}
-        }
-    }));
-    handles.push(thread::spawn(move || {
-        loop {
-            sleep(Duration::from_millis(10));
-            socket3.lock().unwrap().write_all(".".as_bytes()).unwrap();
-            socket3.lock().unwrap().flush().unwrap();
+        }));
+        for task in receivers_tasks {
+            task.join().expect("Failed to join task");
         }
     }));
 
-    for handle in handles {
-        handle.join().unwrap();
+    let connections_2 = connections.clone();
+    let transmitter_config = config.clone();
+
+    modem_tasks.push(thread::spawn(move || {
+        let (send, recv) = mpsc::channel();
+
+        let mut transmitters_tasks = vec![];
+
+        let sender = send.clone();
+        transmitters_tasks.push(thread::spawn(move || {
+            let stdin = io::stdin();
+            let mut stdout = io::stdout();
+            let reader = BufReader::new(stdin);
+
+            let mut lines = reader.lines();
+
+            loop {
+                for line in lines.by_ref() {
+                    stdout.write_i8(0).unwrap();
+                    let line = line.unwrap();
+                    let protocol = Protocol::new(&line, src, 255, 0, FrameType::Data);
+                    sender.send(protocol).unwrap();
+                }
+            }
+        }));
+        let sender = send.clone();
+        transmitters_tasks.push(thread::spawn(move || {
+            // // ack
+            // loop {
+            //     if let Some(frame) = connections_2.write().unwrap().pop() {
+            //         let protocol = Protocol::new(
+            //             "",
+            //             frame.destination_address,
+            //             src,
+            //             frame.sequence_number,
+            //             FrameType::Acknowledgement,
+            //         );
+            //         sender.send(protocol).unwrap();
+            //     }
+            // }
+        }));
+
+        let modem = Modem::new(transmitter_config);
+        while let Ok(frame) = recv.recv() {
+            modem.transmit(frame.to_bytes());
+        }
+
+        for task in transmitters_tasks {
+            task.join().expect("Failed to join task");
+        }
+    }));
+
+    for task in modem_tasks {
+        task.join().expect("Failed to join task");
     }
+
+    Ok(())
 }
