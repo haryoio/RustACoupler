@@ -103,10 +103,11 @@ impl Modem {
         speaker.play(samples);
     }
 
-    fn init_input_device(&mut self) -> cpal::Device {
+    fn init_input_device(&mut self) -> (Modem, Device) {
+        let mut config = self.clone();
+        let host = cpal::default_host();
         let device = match self.input_device {
             Some(ref device) => {
-                let host = cpal::default_host();
                 let input_device = host
                     .input_devices()
                     .expect("no input device available")
@@ -115,27 +116,17 @@ impl Modem {
                 input_device
             }
             None => {
-                let host = cpal::default_host();
-                let input_device = host
-                    .default_input_device()
-                    .expect("no input device available");
+                let input_device = host.default_input_device().unwrap();
                 input_device
             }
         };
 
-        let supported_stream_config_range = device
-            .supported_input_configs()
-            .expect("error while querying configs");
+        let default_config = device.default_input_config().unwrap();
+        config.samplerate = default_config.sample_rate().0;
+        config.channels = default_config.channels() as u8;
+        config.output_device = Some(device.name().unwrap());
 
-        let supported_stream_config = supported_stream_config_range.filter(|c| {
-            c.max_sample_rate().0 >= self.samplerate && c.min_sample_rate().0 <= self.samplerate
-        });
-
-        if supported_stream_config.count() == 0 {
-            panic!("samplerate not supported");
-        }
-
-        device
+        (config, device)
     }
     fn init_output_device(&mut self) -> (Modem, Device) {
         let mut config = self.clone();
@@ -164,13 +155,12 @@ impl Modem {
     }
 
     pub fn record(&mut self, connection_tx: mpsc::Sender<Datalink>) {
-        let input_device = self.init_input_device();
-        let config = input_device.default_input_config().unwrap();
+        let (config, input_device) = self.init_input_device();
         let carrier = self.carrier;
         let deviation = self.deviation;
-        let samplerate = config.sample_rate().0 as u32;
+        let samplerate = config.samplerate;
         let baudrate = self.baudrate;
-        let channels = config.channels() as u8;
+        let channels = config.channels as u8;
         let threshold = self.threshold;
 
         let latency = 1.0 / baudrate as f32 * samplerate as f32;
