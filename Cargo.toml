@@ -8,7 +8,7 @@ async-trait = "0.1.59"
 biquad = "0.4.2"
 byteorder = "1.4.3"
 clap = { version = "4.0.29", features = ["derive"] }
-cpal = { version = "0.14.1", features = ["asio"] }
+cpal ="0.14.1"
 crc = "3.0.0"
 # dft = "0.5.5"
 futures = "0.3.25"

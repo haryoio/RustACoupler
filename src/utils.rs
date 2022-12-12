@@ -16,12 +16,12 @@ pub fn ocillator(samplerate: u32, freq: f32) -> impl Iterator<Item = f32> {
     })
 }
 
-pub fn save_wave(filename: &str, data: Vec<f32>, sr: u32) {
+pub fn save_wave(filename: &str, data: Vec<f32>, sample_rate: u32, channels: u16) {
     let spec = hound::WavSpec {
-        channels:        1,
-        sample_rate:     sr,
+        channels,
+        sample_rate,
         bits_per_sample: 32,
-        sample_format:   hound::SampleFormat::Float,
+        sample_format: hound::SampleFormat::Float,
     };
 
     let mut writer = hound::WavWriter::create(filename, spec).unwrap();

@@ -90,7 +90,7 @@ fn main() -> Result<(), Error> {
             // }
         }));
 
-        let modem = Modem::new(transmitter_config);
+        let mut modem = Modem::new(transmitter_config);
         while let Ok(frame) = recv.recv() {
             modem.transmit(frame.to_bytes());
         }
